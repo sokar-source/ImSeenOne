@@ -1,0 +1,100 @@
+import tensorflow as tf
+import os
+import datetime
+import matplotlib.pyplot as plt
+import tensorflow_datasets as tfds
+from tensorflow import keras
+#minimo filtrado de imaganes posibles para que no sea tan pesado 
+
+#Parametros
+IMG_SIZE = (120, 120)
+BATCH_SIZE = 32
+EPOCHS = 300
+DATASET_PATH = r"C:\Users\oscar\OneDrive\Escritorio\dataset jpg"
+SAVE_PATH = r"C:\Users\oscar\OneDrive\Escritorio\modelos de VALE"
+os.makedirs(SAVE_PATH, exist_ok=True)
+
+# Etiquetas de señas
+LABELS = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'l', 'm', 'n', 'o', 'p', 'r', 's', 't', 'u', 'v', 'w', 'y']
+    
+#Seguridad ante corrupcion de coco 
+COCO_PATH = r"C:\Users\oscar\tensorflow_datasets\coco\2017\1.1.0"
+if os.path.exists(COCO_PATH):
+    try:
+        coco_dataset, coco_info = tfds.load("coco/2017", split="train", with_info=True, download=False)
+        print("COCO Dataset cargado correctamente")
+    except Exception:
+        print("Error en COCO, eliminando archivos y volviendo a descargar...")
+        import shutil
+        shutil.rmtree(COCO_PATH, ignore_errors=True)
+        coco_dataset, coco_info = tfds.load("coco/2017", split="train", download=True)
+else:
+    coco_dataset, coco_info = tfds.load("coco/2017", split="train", download=True)
+print("✔ COCO Dataset listo.")
+
+#Aumento Datos
+data_gen = keras.preprocessing.image.ImageDataGenerator(
+    rescale=1.0 / 255,
+    rotation_range=15,
+    width_shift_range=0.2,
+    height_shift_range=0.2,
+    shear_range=0.2,
+    zoom_range=0.2,
+    horizontal_flip=True,
+    validation_split=0.2
+)
+
+
+train_generator = data_gen.flow_from_directory(
+    DATASET_PATH, target_size=IMG_SIZE, batch_size=BATCH_SIZE, class_mode='categorical', subset='training'
+)
+validation_generator = data_gen.flow_from_directory(
+    DATASET_PATH, target_size=IMG_SIZE, batch_size=BATCH_SIZE, class_mode='categorical', subset='validation'
+)
+
+if train_generator.samples == 0 or validation_generator.samples == 0:
+    raise ValueError("⚠ No se encontraron imágenes en el directorio proporcionado.")
+
+#Muestra una imagen de prueba
+batch = next(iter(train_generator))
+images, labels = batch
+plt.imshow(images[0])
+plt.title("Ejemplo de imagen cargada")
+plt.show()
+print("Etiqueta:", labels[0])
+
+#Construcción del modelo con MobileNetV2
+base_model = keras.applications.MobileNetV2(input_shape=(120, 120, 3), include_top=False, weights='imagenet')
+base_model.trainable = False  # Congela el modelo preentrenado
+
+model = keras.models.Sequential([
+    base_model,
+    keras.layers.GlobalAveragePooling2D(),
+    keras.layers.Dense(128, activation='relu'),
+    keras.layers.Dropout(0.5),
+    keras.layers.Dense(len(LABELS), activation='softmax')
+])
+
+#Compilar el modelo
+model.compile(optimizer=keras.optimizers.Adam(),
+              loss='categorical_crossentropy',
+              metrics=['accuracy'])
+
+#Callbacks para mejorar el entrenamiento
+callbacks = [
+    keras.callbacks.EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True),
+    keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.2, patience=3, min_lr=1e-6)
+]
+
+#Entrenar el modelo
+history = model.fit(
+    train_generator,
+    validation_data=validation_generator,
+    epochs=EPOCHS,
+    callbacks=callbacks
+)
+
+#Guardar el modelo en formato .keras
+model_filename = os.path.join(SAVE_PATH, f"model_sign_language_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.keras")
+model.save(model_filename)
+print(f"Modelo guardado en: {model_filename}")
